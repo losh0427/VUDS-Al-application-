@@ -1,0 +1,42 @@
+{
+  "Pressure Flow Test Graph": {
+    "offset_x": 0,
+    "offset_y": -550,
+    "width": 740,
+    "height": 540
+  },
+  "Pressure Flow Uroflow Segment": {
+    "offset_x": 0,
+    "offset_y": -550,
+    "width": 740,
+    "height": 540
+  },
+  "Pressure Flow Summary": {
+    "offset_x": 0,
+    "offset_y": 20,
+    "width": 740,
+    "height": 280,
+    "columns": {
+      "column1": {
+        "x": 185,
+        "y": 27,
+        "width": 100,
+        "row_height": 25,
+        "row_count": 10
+      },
+      "column2": {
+        "x": 555,
+        "y": 27,
+        "width": 100,
+        "row_height": 25,
+        "row_count": 9
+      }
+    }
+  },
+  "Fluoroscopy in VUDS": {
+    "offset_y": 4,
+    "x": 15,
+    "width": 373,
+    "height": 275
+  }
+}

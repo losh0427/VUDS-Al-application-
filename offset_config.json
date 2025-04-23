@@ -1,0 +1,55 @@
+{
+    "Detrusor instability": [
+      {"label": "Yes", "offset": [455, 23]},
+      {"label": "No",  "offset": [565,  23]}
+    ],
+    "Flow pattern": [
+      {"label": "Obstruction",   "offset": [310, 23]},
+      {"label": "Intermittent",  "offset": [570, 23]},
+      {"label": "Interrupted",   "offset": [850, 23]},
+      {"label": "Staccato",      "offset": [1100, 23]},
+      {"label": "Supervoider",   "offset": [1310,23]},
+      {"label": "Bell",          "offset": [1560,23]}
+    ],
+    "EMG: ES relaxation": [
+      {"label": "Fair",        "offset": [395,  23]},
+      {"label": "Acceptable",  "offset": [530,  23]},
+      {"label": "Impaired",    "offset": [773,  23]},
+      {"label": "Poor",        "offset": [963,  23]}
+    ],
+    "Trabeculation": [
+      {"label": "Yes", "offset": [ 330,  23]},
+      {"label": "No",  "offset": [ 440,  23]}
+    ],
+    "Diverticulum": [
+      {"label": "Yes", "offset": [ 312,  23]},
+      {"label": "No",  "offset": [ 442,  23]}
+    ],
+    "Cystocele": [
+      {"label": "Yes", "offset": [ 270,  23]},
+      {"label": "No",  "offset": [ 378,  23]}
+    ],
+    "VUR": [
+      {"label": "Yes", "offset": [ 150,  23]},
+      {"label": "No",  "offset": [ 150,  95]}
+    ],
+    "Bladder neck relaxation": [
+      {"label": "Fair",       "offset": [487,   23]},
+      {"label": "Acceptable", "offset": [625,  23]},
+      {"label": "Impaired",   "offset": [862,  23]},
+      {"label": "Poor",       "offset": [1070,  23]}
+    ],
+    "External sphincter relaxation": [
+      {"label": "Fair",       "offset": [579,  23]},
+      {"label": "Acceptable", "offset": [739,  23]},
+      {"label": "Impaired",   "offset": [955,  23]},
+      {"label": "Poor",       "offset": [1183,  23]}
+    ],
+    "Pelvic floor relaxation": [
+      {"label": "Fair",       "offset": [487,   23]},
+      {"label": "Acceptable", "offset": [625,  23]},
+      {"label": "Impaired",   "offset": [862,  23]},
+      {"label": "Poor",       "offset": [1070,  23]}
+    ]
+  }
+  
