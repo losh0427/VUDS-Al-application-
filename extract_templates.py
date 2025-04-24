@@ -210,4 +210,4 @@ def batch_process_reports(root_dir="raw_dataset", log_path="extraction_log.json"
 
 if __name__ == "__main__":
     # Example usage: batch_process_reports("raw_dataset", "extraction_log.json")
-    batch_process_reports("raw_dataset", "extraction_log.json")
+    batch_process_reports("../../raw_dataset", "../../extraction_log.json")

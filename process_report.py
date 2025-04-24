@@ -1,9 +1,10 @@
 import os
+import glob
+import json
+from pdf2image import convert_from_path
 import cv2
 import numpy as np
-from pdf2image import convert_from_path
 from paddleocr import PaddleOCR
-import json
 
 # Configuration
 LABEL_KEYS = {
@@ -22,116 +23,177 @@ LABEL_KEYS = {
 VALUE_MAP = {
     "Yes": "1", "No": "0", "Obstruction": "0", "Intermittent": "1",
     "Interrupted": "2", "Staccato": "3", "Supervoider": "4", "Bell": "5",
-    "Fair": "0", "Acceptable": "1", "Impaired": "2", "Poor": "3"
+    "Fair": "0", "Acceptable": "1", "Impaired": "2", "Poor": "3",
+    "Artifect": "4", "Delayed": "4", "Inconclusive": "5"
 }
 
-# 讀入 offset 配置
+# Load offset configuration
 with open("offset_config.json", "r", encoding="utf-8") as f:
     OFFSET_CFG = json.load(f)
 
+# Initialize OCR once
 ocr = PaddleOCR(use_angle_cls=True, lang='en', show_log=False)
 
+
 def is_checked_pixel(b, g, r):
-    # 橘色背景 (勾框) 或 白色 (勾選)
-    if 240 <= b <= 255 and 80 <= g <= 150 and r <= 40:
-        return True
-    if b > 240 and g > 240 and r > 240:
-        return True
-    return False
+    """
+    判斷單一像素是否為勾選標記（橘色框）
+    """
+    return 240 <= b <= 255 and 80 <= g <= 150 and r <= 40
+
 
 def is_checked_region(img, x, y, delta=15):
+    """
+    在 (x,y) 周圍 delta 半徑內若有任一勾選像素即回傳 True
+    """
     h, w = img.shape[:2]
     for dx in range(-delta, delta+1):
         for dy in range(-delta, delta+1):
-            px, py = x+dx, y+dy
-            if 0 <= px < w and 0 <= py < h:
-                b,g,r = img[py,px]
-                if is_checked_pixel(b, g, r):
-                    return True
+            px, py = x + dx, y + dy
+            if 0 <= px < w and 0 <= py < h and is_checked_pixel(*img[py, px]):
+                return True
     return False
 
+
+def visualize_detected_labels(img, ocr_results, annotated_dir, page_idx):
+    """
+    標註 OCR 偵測結果與 checkbox 狀態，並存至 annotated_dir
+    """
+    debug_img = img.copy()
+    for line in ocr_results[0]:
+        coords, (text, _) = line
+        txt = text.strip()
+        for key in LABEL_KEYS:
+            if key in txt:
+                print(f"\n🟩 Detected Label '{key}' at {coords[0]}")
+                pts = np.array(coords, np.int32)
+                cv2.polylines(debug_img, [pts], True, (0,255,0), 2)
+                x0, y0 = map(int, coords[0])
+                for opt in OFFSET_CFG[key]:
+                    px, py = x0 + opt['offset'][0], y0 + opt['offset'][1]
+                    checked = is_checked_region(img, px, py)
+                    mapped = VALUE_MAP.get(opt['label'], 'Unknown')
+                    print(f"  → Checking '{opt['label']}' at ({px},{py}) → {'✔' if checked else '✘'} mapped '{mapped}'")
+                    cv2.circle(debug_img, (px, py), 3, (0,0,255), -1)
+                    cv2.putText(debug_img, opt['label'], (px+5, py-5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,0,255), 1)
+    save_path = os.path.join(annotated_dir, f"output_debug_page_{page_idx+1}.png")
+    cv2.imwrite(save_path, debug_img)
+    print(f"🔍 Debug image saved: {save_path}")
+
+
 def extract_labels_from_image(img, ocr_results):
-    data = {v: "NA" for v in LABEL_KEYS.values()}
+    """
+    根據 OCR 結果與 OFFSET_CFG，回傳單張影像中所有 label 的值
+    """
+    data = {v: 'NA' for v in LABEL_KEYS.values()}
     for line in ocr_results[0]:
         coords, (text, _) = line
         txt = text.strip()
         for key_text, key_label in LABEL_KEYS.items():
             if key_text in txt:
-                x0, y0 = int(coords[0][0]), int(coords[0][1])
+                data[key_label] = 'NA'
+                x0, y0 = map(int, coords[0])
+                picks = []
                 for opt in OFFSET_CFG[key_text]:
-                    lbl = opt["label"]
-                    dx, dy = opt["offset"]
-                    px, py = x0 + dx, y0 + dy
-                    if 0 <= px < img.shape[1] and 0 <= py < img.shape[0]:
-                        if is_checked_region(img, px, py, delta=15):
-                            val = VALUE_MAP.get(lbl)
-                            if key_label == "Flow_pattern":
-                                prev = data[key_label]
-                                if prev == "NA":
-                                    data[key_label] = val
-                                elif val not in prev.split(","):
-                                    data[key_label] = ",".join(sorted(prev.split(",") + [val]))
-                            else:
-                                if data[key_label] == "NA":
-                                    data[key_label] = val
+                    px, py = x0 + opt['offset'][0], y0 + opt['offset'][1]
+                    if 0 <= px < img.shape[1] and 0 <= py < img.shape[0] and is_checked_region(img, px, py):
+                        picks.append(VALUE_MAP.get(opt['label']))
+                if picks:
+                    unique = sorted(set(picks))
+                    data[key_label] = ','.join(unique)
                 break
     return data
 
-def visualize_detected_labels(img, ocr_results, report_dir, page_idx):
-    debug_img = img.copy()
-    for line in ocr_results[0]:
-        coords, (text, _) = line
-        txt = text.strip()
-        for key_text in LABEL_KEYS:
-            if key_text in txt:
-                # 畫文字框
-                pts = np.array(coords, np.int32)
-                cv2.polylines(debug_img, [pts], True, (0,255,0), 2)
-                x0, y0 = int(coords[0][0]), int(coords[0][1])
-                for opt in OFFSET_CFG[key_text]:
-                    dx, dy = opt["offset"]
-                    px, py = x0 + dx, y0 + dy
-                    # 偵測區域以紅點顯示
-                    cv2.circle(debug_img, (px, py), 3, (0,0,255), -1)
-                    cv2.putText(debug_img, opt["label"], (px+5, py-5),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,0,255), 1)
-    path = os.path.join(report_dir, f"output_debug_page_{page_idx+1}.png")
-    cv2.imwrite(path, debug_img)
-    print(f"🔍 debug image saved: {path}")
 
 def process_report_folder(report_dir):
-    all_data = {v: "NA" for v in LABEL_KEYS.values()}
+    """
+    處理單份報告 PDF：
+      - convert_from_path 轉 JPG
+      - OCR 與標註
+      - 抽取 checkbox 結果
+      - 最終 output.txt 存至 output/result
+    """
+    annotated_dir = os.path.join(report_dir, 'output', 'annotated')
+    result_dir    = os.path.join(report_dir, 'output', 'result')
+    os.makedirs(annotated_dir, exist_ok=True)
+    os.makedirs(result_dir,    exist_ok=True)
+
+    all_data = {v: 'NA' for v in LABEL_KEYS.values()}
     for fname in sorted(os.listdir(report_dir)):
-        if not fname.lower().endswith(".pdf"):
+        if not fname.lower().endswith('.pdf'):
             continue
-        pages = convert_from_path(os.path.join(report_dir, fname), dpi=300)
+        pdf_path = os.path.join(report_dir, fname)
+        pages = convert_from_path(pdf_path, dpi=300)
         for i, page in enumerate(pages):
             img = cv2.cvtColor(np.array(page), cv2.COLOR_RGB2BGR)
             res = ocr.ocr(img, cls=True)
-            visualize_detected_labels(img, res, report_dir, i)
+            visualize_detected_labels(img, res, annotated_dir, i)
             data = extract_labels_from_image(img, res)
             for k, v in data.items():
-                if k == "Flow_pattern":
-                    if all_data[k] == "NA":
-                        all_data[k] = v
-                    elif v != "NA":
-                        merged = sorted(set(all_data[k].split(",") + v.split(",")))
-                        all_data[k] = ",".join(merged)
-                else:
-                    if all_data[k] == "NA" and v != "NA":
-                        all_data[k] = v
-    out = os.path.join(report_dir, "output.txt")
-    with open(out, "w", encoding="utf-8") as f:
+                if v != 'NA':
+                    all_data[k] = v
+
+    out_path = os.path.join(result_dir, 'output.txt')
+    with open(out_path, 'w', encoding='utf-8') as f:
         for section in [
-            ["Detrusor_instability"],
-            ["Flow_pattern","EMG_ES_relaxation"],
-            ["Trabeculation","Diverticulum","Cystocele","VUR",
-             "Bladder_neck_relaxation","External_sphincter_relaxation","Pelvic_floor_relaxation"]
+            ['Detrusor_instability'],
+            ['Flow_pattern', 'EMG_ES_relaxation'],
+            ['Trabeculation', 'Diverticulum', 'Cystocele', 'VUR',
+             'Bladder_neck_relaxation', 'External_sphincter_relaxation', 'Pelvic_floor_relaxation']
         ]:
             for key in section:
                 f.write(f"{key}: {all_data[key]}\n")
             f.write("\n")
-    print(f"✅ output saved: {out}")
+    print(f"✅ Results saved: {out_path}")
 
-if __name__ == "__main__":
-    process_report_folder("./report")
+
+def batch_process_reports(root_dir='raw_dataset', log_path='report_extraction_log.json'):
+    """
+    批次處理 raw_dataset 內所有 patient/report，調用 process_report_folder。
+    並記錄每個 report_dir 狀態於 log_path。
+    """
+    if os.path.exists(log_path):
+        with open(log_path, 'r', encoding='utf-8') as f:
+            log = json.load(f)
+    else:
+        log = {}
+
+    total_new = 0
+    for patient_id in sorted(os.listdir(root_dir)):
+        patient_dir = os.path.join(root_dir, patient_id)
+        if not os.path.isdir(patient_dir):
+            continue
+        for report_id in sorted(os.listdir(patient_dir)):
+            report_dir = os.path.join(patient_dir, report_id)
+            if not os.path.isdir(report_dir):
+                continue
+            status = log.get(report_dir)
+            if status == 'done':
+                print(f"✅ Skipped (done): {report_dir}")
+                continue
+            pdfs = glob.glob(os.path.join(report_dir, '*.pdf'))
+            if not pdfs:
+                print(f"⚠️  No PDF in: {report_dir}")
+                log[report_dir] = 'no_pdfs'
+                continue
+            print(f"🟡 Processing: {report_dir}")
+            try:
+                process_report_folder(report_dir)
+                log[report_dir] = 'done'
+                total_new += 1
+            except Exception as e:
+                print(f"❌ Error in {report_dir}: {e}")
+                log[report_dir] = f"error: {e}"
+
+    with open(log_path, 'w', encoding='utf-8') as f:
+        json.dump(log, f, indent=2, ensure_ascii=False)
+
+    print(f"\n✅ Batch complete. New processed: {total_new}")
+    print(f"📄 Log saved: {log_path}")
+
+
+if __name__ == '__main__':
+    batch_process_reports(
+        root_dir=os.path.abspath('../../raw_dataset'),
+        log_path=os.path.abspath('../../report_extraction_log.json')
+    )

@@ -15,7 +15,8 @@
       {"label": "Fair",        "offset": [395,  23]},
       {"label": "Acceptable",  "offset": [530,  23]},
       {"label": "Impaired",    "offset": [773,  23]},
-      {"label": "Poor",        "offset": [963,  23]}
+      {"label": "Poor",        "offset": [965,  23]},
+      {"label": "Artifect",    "offset": [1103, 23]}
     ],
     "Trabeculation": [
       {"label": "Yes", "offset": [ 330,  23]},
@@ -37,19 +38,25 @@
       {"label": "Fair",       "offset": [487,   23]},
       {"label": "Acceptable", "offset": [625,  23]},
       {"label": "Impaired",   "offset": [862,  23]},
-      {"label": "Poor",       "offset": [1070,  23]}
+      {"label": "Poor",       "offset": [1070,  23]},
+      {"label": "Delayed",   "offset": [1208, 23]},
+      {"label": "Inconclusive",    "offset": [1398, 23]}
     ],
     "External sphincter relaxation": [
       {"label": "Fair",       "offset": [579,  23]},
       {"label": "Acceptable", "offset": [739,  23]},
       {"label": "Impaired",   "offset": [955,  23]},
-      {"label": "Poor",       "offset": [1183,  23]}
+      {"label": "Poor",       "offset": [1183,  23]},
+      {"label": "Delayed",   "offset": [1300, 23]},
+      {"label": "Inconclusive",    "offset": [1495, 23]}
     ],
     "Pelvic floor relaxation": [
       {"label": "Fair",       "offset": [487,   23]},
       {"label": "Acceptable", "offset": [625,  23]},
       {"label": "Impaired",   "offset": [862,  23]},
-      {"label": "Poor",       "offset": [1070,  23]}
+      {"label": "Poor",       "offset": [1070,  23]},
+      {"label": "Delayed",   "offset": [1208, 23]},
+      {"label": "Inconclusive",    "offset": [1398, 23]}
     ]
   }
   
