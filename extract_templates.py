@@ -53,12 +53,13 @@ def setup_vuds_extractor(template_path="template_config.json", base_input_dir="t
     for path in dirs.values():
         os.makedirs(path, exist_ok=True)
 
-    pattern = re.compile(r"^\d{1,2}:\d{2}\.\d{1,2}\s*(record|single capture)$", re.IGNORECASE)
+    # Relaxed pattern: allow optional space or digits before record/singlecapture
+    pattern = re.compile(r".*\d+\s*(?:record|single\s*capture)$", re.IGNORECASE)
     fluoro_cfg = templates.get("Fluoroscopy in VUDS", {})
 
     return ocr, templates, summary_cfg, labels, units, dirs, pattern, fluoro_cfg
 
-# === dummy placeholder (real version was defined previously) ===
+# === process_image with debug logging ===
 def process_image(img_path, ocr, templates, summary_cfg, labels, units, dirs, pattern, fluoro_cfg):
     """
     Process a single image: 
@@ -66,6 +67,7 @@ def process_image(img_path, ocr, templates, summary_cfg, labels, units, dirs, pa
       - Extract and save PFTG, PFUS, PFS blocks
       - Extract Summary cells to CSV
       - Annotate and save the full image
+      - Log OCR segments to debug.txt
     """
     base = os.path.splitext(os.path.basename(img_path))[0]
     pil_img = Image.open(img_path).convert("RGB")
@@ -74,6 +76,17 @@ def process_image(img_path, ocr, templates, summary_cfg, labels, units, dirs, pa
 
     # Run OCR on full image
     results = ocr.ocr(np_img, cls=True)
+
+    # # Debug: write OCR segments to debug.txt in same folder as image
+    # report_dir = os.path.dirname(img_path)
+    # debug_path = os.path.join(report_dir, "debug.txt")
+    # with open(debug_path, "a", encoding="utf-8") as debug_f:
+    #     for line in results:
+    #         for box, (txt, _) in line:
+    #             xs = [pt[0] for pt in box]
+    #             ys = [pt[1] for pt in box]
+    #             x, y = int(min(xs)), int(min(ys))
+    #             debug_f.write(f"{txt}, {x}, {y}\n")
 
     # 1) X-ray extraction and annotation
     fx, fy = fluoro_cfg.get("x", 0), fluoro_cfg.get("offset_y", 0)
@@ -107,42 +120,50 @@ def process_image(img_path, ocr, templates, summary_cfg, labels, units, dirs, pa
     # 3) Extract template blocks
     for label, cfg in templates.items():
         for blk in text_blocks:
-            if label.lower() in blk.text.lower():
-                tx1, ty1, tx2, ty2 = map(int, blk.coordinates)
-                cv2.rectangle(np_ann, (tx1, ty1), (tx2, ty2), (0, 255, 255), 2)
-
-                sx = tx1 + cfg.get("offset_x", 0)
-                sy = ty1 + cfg.get("offset_y", 0)
-                ex = min(np_img.shape[1], sx + cfg["width"])
-                ey = min(np_img.shape[0], sy + cfg["height"])
-                crop_block = np_img[sy:ey, sx:ex]
-
-                # Select output folder by label
-                if label == "Pressure Flow Test Graph":
-                    out_b = os.path.join(dirs["pftg"], f"{base}_PFTG.jpg")
-                elif label == "Pressure Flow Uroflow Segment":
-                    out_b = os.path.join(dirs["pfus"], f"{base}_PFUS.jpg")
-                elif label == "Pressure Flow Summary":
-                    out_b = os.path.join(dirs["pfs"], f"{base}_PFS.jpg")
-                else:
+            text_lower = blk.text.lower()
+            # match Uroflow more loosely
+            if label == "Pressure Flow Uroflow Segment":
+                if "segment" not in text_lower:
+                    continue
+            else:
+                if label.lower() not in text_lower:
                     continue
 
-                cv2.imwrite(out_b, cv2.cvtColor(crop_block, cv2.COLOR_RGB2BGR))
-                cv2.rectangle(np_ann, (sx, sy), (ex, ey), (0, 0, 255), 2)
+            tx1, ty1, tx2, ty2 = map(int, blk.coordinates)
+            cv2.rectangle(np_ann, (tx1, ty1), (tx2, ty2), (0, 255, 255), 2)
 
-                # If summary, extract each cell
-                if label == "Pressure Flow Summary":
-                    for col in summary_cfg["columns"].values():
-                        cx0 = sx + col["x"]; cy0 = sy + col["y"]
-                        for i in range(col["row_count"]):
-                            x0 = int(cx0); y0 = int(cy0 + i * col["row_height"])
-                            x1 = x0 + col["width"]; y1 = y0 + col["row_height"]
-                            cell = np_img[y0:y1, x0:x1]
-                            r = ocr.ocr(cell, cls=True)
-                            text = "".join([itm[1][0] for itm in r[0]]) if r and r[0] else ""
-                            summary_vals.append(text)
-                            cv2.rectangle(np_ann, (x0, y0), (x1, y1), (0, 255, 0), 1)
-                break
+            sx = tx1 + cfg.get("offset_x", 0)
+            sy = ty1 + cfg.get("offset_y", 0)
+            ex = min(np_img.shape[1], sx + cfg["width"])
+            ey = min(np_img.shape[0], sy + cfg["height"])
+            crop_block = np_img[sy:ey, sx:ex]
+
+            # Select output folder by label
+            if label == "Pressure Flow Test Graph":
+                out_b = os.path.join(dirs["pftg"], f"{base}_PFTG.jpg")
+            elif label == "Pressure Flow Uroflow Segment":
+                out_b = os.path.join(dirs["pfus"], f"{base}_PFUS.jpg")
+            elif label == "Pressure Flow Summary":
+                out_b = os.path.join(dirs["pfs"], f"{base}_PFS.jpg")
+            else:
+                continue
+
+            cv2.imwrite(out_b, cv2.cvtColor(crop_block, cv2.COLOR_RGB2BGR))
+            cv2.rectangle(np_ann, (sx, sy), (ex, ey), (0, 0, 255), 2)
+
+            # If summary, extract each cell
+            if label == "Pressure Flow Summary":
+                for col in summary_cfg["columns"].values():
+                    cx0 = sx + col["x"]; cy0 = sy + col["y"]
+                    for i in range(col["row_count"]):
+                        x0 = int(cx0); y0 = int(cy0 + i * col["row_height"])
+                        x1 = x0 + col["width"]; y1 = y0 + col["row_height"]
+                        cell = np_img[y0:y1, x0:x1]
+                        r = ocr.ocr(cell, cls=True)
+                        text = "".join([itm[1][0] for itm in r[0]]) if r and r[0] else ""
+                        summary_vals.append(text)
+                        cv2.rectangle(np_ann, (x0, y0), (x1, y1), (0, 255, 0), 1)
+            break
 
     # 4) Save summary CSV if any
     if summary_vals:
@@ -157,13 +178,25 @@ def process_image(img_path, ocr, templates, summary_cfg, labels, units, dirs, pa
     out_ann = os.path.join(dirs["annotated"], f"{base}_annotated.jpg")
     cv2.imwrite(out_ann, cv2.cvtColor(np_ann, cv2.COLOR_RGB2BGR))
 
-
 # === global run function ===
 def run_on_report_folder(report_path):
-    ocr, templates, summary_cfg, labels, units, dirs, pattern, fluoro_cfg = setup_vuds_extractor(base_input_dir=report_path)
-    for jpg_file in glob.glob(os.path.join(report_path, "*.jpg")):
-        process_image(jpg_file, ocr, templates, summary_cfg, labels, units, dirs, pattern, fluoro_cfg)
-        break
+    ocr, templates, summary_cfg, labels, units, dirs, pattern, fluoro_cfg = \
+        setup_vuds_extractor(base_input_dir=report_path)
+
+    jpg_files = glob.glob(os.path.join(report_path, "*.jpg"))
+    if not jpg_files:
+        print(f"⚠️  No .jpg found in {report_path}")
+        return
+
+    for jpg_file in jpg_files:
+        try:
+            process_image(
+                jpg_file, ocr, templates, summary_cfg,
+                labels, units, dirs, pattern, fluoro_cfg
+            )
+            print(f"✅ {os.path.basename(jpg_file)} done")
+        except Exception as e:
+            print(f"❌ error on {jpg_file}: {e}")
 
 # === batch driver ===
 def batch_process_reports(root_dir="raw_dataset", log_path="extraction_log.json"):
@@ -211,3 +244,5 @@ def batch_process_reports(root_dir="raw_dataset", log_path="extraction_log.json"
 if __name__ == "__main__":
     # Example usage: batch_process_reports("raw_dataset", "extraction_log.json")
     batch_process_reports("../../raw_dataset", "../../extraction_log.json")
+    # test single report processing
+    # run_on_report_folder("../../test")
