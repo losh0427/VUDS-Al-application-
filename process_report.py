@@ -85,13 +85,16 @@ def extract_labels_from_image(img, ocr_results):
     """
     根據 OCR 結果與 OFFSET_CFG，回傳單張影像中所有 label 的值
     """
-    data = {v: 'NA' for v in LABEL_KEYS.values()}
+    data = {}  # 改為空字典，不預設 'NA'
     for line in ocr_results[0]:
         coords, (text, _) = line
         txt = text.strip()
         for key_text, key_label in LABEL_KEYS.items():
             if key_text in txt:
-                data[key_label] = 'NA'
+                # 如果這個標籤已經有值，跳過
+                if key_label in data:
+                    continue
+                    
                 x0, y0 = map(int, coords[0])
                 picks = []
                 for opt in OFFSET_CFG[key_text]:
@@ -101,6 +104,8 @@ def extract_labels_from_image(img, ocr_results):
                 if picks:
                     unique = sorted(set(picks))
                     data[key_label] = ','.join(unique)
+                else:
+                    data[key_label] = 'NA'
                 break
     return data
 
@@ -118,7 +123,10 @@ def process_report_folder(report_dir):
     os.makedirs(annotated_dir, exist_ok=True)
     os.makedirs(result_dir,    exist_ok=True)
 
+    # 初始化資料字典和 Flow_pattern 計數器
     all_data = {v: 'NA' for v in LABEL_KEYS.values()}
+    flow_pattern_count = 0  # 追蹤 Flow_pattern 出現次數
+
     for fname in sorted(os.listdir(report_dir)):
         if not fname.lower().endswith('.pdf'):
             continue
@@ -129,8 +137,17 @@ def process_report_folder(report_dir):
             res = ocr.ocr(img, cls=True)
             visualize_detected_labels(img, res, annotated_dir, i)
             data = extract_labels_from_image(img, res)
+            
+            # 處理每個標籤
             for k, v in data.items():
-                if v != 'NA':
+                # 特殊處理 Flow_pattern
+                if k == 'Flow_pattern':
+                    flow_pattern_count += 1
+                    # 只在第二次出現時更新值
+                    if flow_pattern_count == 2:
+                        all_data[k] = v
+                # 其他標籤：只在第一次出現時更新
+                elif all_data[k] == 'NA':
                     all_data[k] = v
 
     out_path = os.path.join(result_dir, 'output.txt')
