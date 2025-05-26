@@ -150,9 +150,9 @@ def main():
     for f in files.values():
         f.close()
     pfs_f.close()
-    # (meta_root / "label_stats.json").write_text(
-    #     json.dumps(stat, indent=2, ensure_ascii=False)
-    # )
+    (meta_root / "label_stats.json").write_text(
+        json.dumps(stat, indent=2, ensure_ascii=False)
+    )
 
     print(f"✅ Dataset built at {proc_root}, total samples: {sid-1}")
 

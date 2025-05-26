@@ -1,6 +1,8 @@
 import os
 import glob
 import json
+import re
+import shutil
 from pdf2image import convert_from_path
 import cv2
 import numpy as np
@@ -74,11 +76,10 @@ def visualize_detected_labels(img, ocr_results, annotated_dir, page_idx):
                     checked = is_checked_region(img, px, py)
                     mapped = VALUE_MAP.get(opt['label'], 'Unknown')
                     print(f"  → Checking '{opt['label']}' at ({px},{py}) → {'✔' if checked else '✘'} mapped '{mapped}'")
-                    cv2.circle(debug_img, (px, py), 3, (0,0,255), -1)
-                    cv2.putText(debug_img, opt['label'], (px+5, py-5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,0,255), 1)
-    save_path = os.path.join(annotated_dir, f"output_debug_page_{page_idx+1}.png")
-    cv2.imwrite(save_path, debug_img)
-    print(f"🔍 Debug image saved: {save_path}")
+                    cv2.circle(debug_img, (px, py), 5, (0,0,255) if checked else (255,0,0), -1)
+    os.makedirs(annotated_dir, exist_ok=True)
+    out_path = os.path.join(annotated_dir, f"annotated_page_{page_idx}.jpg")
+    cv2.imwrite(out_path, debug_img)
 
 
 def extract_labels_from_image(img, ocr_results):
@@ -180,37 +181,61 @@ def batch_process_reports(root_dir='raw_dataset', log_path='report_extraction_lo
         patient_dir = os.path.join(root_dir, patient_id)
         if not os.path.isdir(patient_dir):
             continue
+
+        # 新增：若 patient_dir 底下直接有 PDF，也記錄下來（但仍以子資料夾為單位處理）
+        # 這裡僅呈現有需時可列印，實際處理在子資料夾複製時一併處理
+
         for report_id in sorted(os.listdir(patient_dir)):
             report_dir = os.path.join(patient_dir, report_id)
             if not os.path.isdir(report_dir):
                 continue
+
+            # —— 新增：從 report_id 取 YYYYMMDD，回上一層找 PDF，複製到子資料夾 —— 
+            m = re.search(r'-(\d{8})$', report_id)
+            if m:
+                date_str = m.group(1)
+                candidate_pdf = os.path.join(patient_dir, f"{date_str}報告.pdf")
+                if os.path.isfile(candidate_pdf):
+                    dest_pdf = os.path.join(report_dir, f"{date_str}報告.pdf")
+                    if not os.path.isfile(dest_pdf):
+                        print(f"📄 Found {candidate_pdf}, copying into {report_dir}")
+                        shutil.copy2(candidate_pdf, dest_pdf)
+            # —— 新增結束 —— 
+
             status = log.get(report_dir)
             if status == 'done':
                 print(f"✅ Skipped (done): {report_dir}")
                 continue
+
             pdfs = glob.glob(os.path.join(report_dir, '*.pdf'))
             if not pdfs:
                 print(f"⚠️  No PDF in: {report_dir}")
                 log[report_dir] = 'no_pdfs'
                 continue
+
             print(f"🟡 Processing: {report_dir}")
             try:
                 process_report_folder(report_dir)
                 log[report_dir] = 'done'
                 total_new += 1
             except Exception as e:
-                print(f"❌ Error in {report_dir}: {e}")
-                log[report_dir] = f"error: {e}"
+                print(f"❌ Error processing {report_dir}: {e}")
+                log[report_dir] = 'error'
 
+            # 每處理完一個就立即存 log，防止中斷
+            with open(log_path, 'w', encoding='utf-8') as f:
+                json.dump(log, f, ensure_ascii=False, indent=2)
+
+    print(f"\n🏁 Batch complete. New processed: {total_new}")
     with open(log_path, 'w', encoding='utf-8') as f:
-        json.dump(log, f, indent=2, ensure_ascii=False)
-
-    print(f"\n✅ Batch complete. New processed: {total_new}")
-    print(f"📄 Log saved: {log_path}")
+        json.dump(log, f, ensure_ascii=False, indent=2)
 
 
-if __name__ == '__main__':
-    batch_process_reports(
-        root_dir=os.path.abspath('../../raw_dataset'),
-        log_path=os.path.abspath('../../report_extraction_log.json')
-    )
+if __name__ == "__main__":
+    # 默認以命令列參數呼叫 batch_process_reports
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--root_dir', type=str, default='../../raw_dataset', help='raw_dataset 根目錄')
+    parser.add_argument('--log_path', type=str, default='../../report_extraction_log.json', help='處理 log 檔')
+    args = parser.parse_args()
+    batch_process_reports(root_dir=args.root_dir, log_path=args.log_path)
