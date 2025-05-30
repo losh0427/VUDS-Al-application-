@@ -1,11 +1,10 @@
-torch
 opencv-python
 pillow
 paddlepaddle==2.5.2
 paddleocr==2.10.0
-torchvision
 matplotlib
 reportlab
 fastapi 
 uvicorn[standard] 
 pydantic
+layoutparser

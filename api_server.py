@@ -1,52 +1,43 @@
-"""
-啟動方式：
-  uvicorn api_server:app --host 0.0.0.0 --port 8000
-呼叫方式（範例）：
-  curl -X POST "http://<ip>:8000/infer" \
-       -H "Content-Type: application/json" \
-       -d '{"path": "/workspace/case001"}'
-"""
-
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 import os, traceback
 
-# 直接 import 你整合後的 inference 模組
+# Import the refactored inference module
 from inference import inference_v2
 
+# Initialize FastAPI application
 app = FastAPI(title="VUDS-AI Inference API")
 
-# ---------- Request / Response schema ----------
+# Request schema for inference API
 class InferRequest(BaseModel):
-    path: str                     # 要推論的資料夾
-    model_dir: Optional[str] = None
-    keep_output_folder: bool = True
+    path: str                     # Path to input folder for inference
+    model_dir: Optional[str] = None  # Optional model directory override
+    keep_output_folder: bool = True  # Whether to keep extraction folder
 
+# Response schema for inference API
 class InferResponse(BaseModel):
     ok: bool
     pdf_path: Optional[str] = None
     txt_path: Optional[str] = None
     message: str
 
-# ---------- API ----------
+# Define API endpoint for inference
 @app.post("/infer", response_model=InferResponse)
 def run_inference(req: InferRequest):
-    # 1) 檢查路徑是否存在
+    # Validate input path existence
     abs_path = os.path.abspath(req.path)
     if not os.path.isdir(abs_path):
-        raise HTTPException(status_code=400,
-                            detail=f"path not found: {abs_path}")
-
+        raise HTTPException(status_code=400, detail=f"Path not found: {abs_path}")
     try:
-        # 2) 呼叫 inference_v2
+        # Call inference function
         pdf, txt = inference_v2(
             path=abs_path,
             model_dir=req.model_dir,
             keep_output_folder=req.keep_output_folder,
         )
-        return InferResponse(ok=True, pdf_path=pdf, txt_path=txt,
-                             message="inference completed")
+        return InferResponse(ok=True, pdf_path=pdf, txt_path=txt, message="Inference completed successfully")
     except Exception as e:
+        # Return error details in response
         tb = traceback.format_exc()
-        return InferResponse(ok=False, message=f"{e}\n{tb}")
+        return InferResponse(ok=False, message=f"Error: {e}\n{tb}")

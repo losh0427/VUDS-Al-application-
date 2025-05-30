@@ -18,69 +18,35 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
 
-# Suppress all unnecessary logs
+# Suppress unnecessary logs from libraries
 logging.getLogger('torch').setLevel(logging.ERROR)
 logging.getLogger('paddleocr').setLevel(logging.ERROR)
 logging.getLogger('torchvision').setLevel(logging.ERROR)
 os.environ['TORCH_CPP_LOG_LEVEL'] = 'ERROR'
-os.environ['CUDA_VISIBLE_DEVICES'] = ''  # Force CPU mode for PaddleOCR
-torch.set_printoptions(profile="default")  # Suppress torch tensor printing
+os.environ['CUDA_VISIBLE_DEVICES'] = ''  # Force CPU mode for OCR
+torch.set_printoptions(profile="default")  # Suppress tensor printing
 
-# Label mapping for all tasks
+# Mapping of labels for each task
 LABEL_MAP = {
     'pftg': {
         'Detrusor_instability': {0: 'No', 1: 'Yes'}
     },
     'pfus': {
-        'Flow_pattern': {
-            0: 'Obstruction',
-            1: 'Intermittent',
-            2: 'Interrupted',
-            3: 'Staccato',
-            4: 'Supervoider',
-            5: 'Bell'
-        },
-        'EMG_ES_relaxation': {
-            0: 'Fair',
-            1: 'Acceptable',
-            2: 'Impaired',
-            3: 'Poor',
-            4: 'Artifect'
-        }
+        'Flow_pattern': {0: 'Obstruction', 1: 'Intermittent', 2: 'Interrupted', 3: 'Staccato', 4: 'Supervoider', 5: 'Bell'},
+        'EMG_ES_relaxation': {0: 'Fair', 1: 'Acceptable', 2: 'Impaired', 3: 'Poor', 4: 'Artifact'}
     },
     'xray': {
         'Trabeculation': {0: 'No', 1: 'Yes'},
         'Diverticulum': {0: 'No', 1: 'Yes'},
         'Cystocele': {0: 'No', 1: 'Yes'},
         'VUR': {0: 'No', 1: 'Yes'},
-        'Bladder_neck_relaxation': {
-            0: 'Fair',
-            1: 'Acceptable',
-            2: 'Impaired',
-            3: 'Poor',
-            4: 'Delayed',
-            5: 'Inconclusive'
-        },
-        'External_sphincter_relaxation': {
-            0: 'Fair',
-            1: 'Acceptable',
-            2: 'Impaired',
-            3: 'Poor',
-            4: 'Delayed',
-            5: 'Inconclusive'
-        },
-        'Pelvic_floor_relaxation': {
-            0: 'Fair',
-            1: 'Acceptable',
-            2: 'Impaired',
-            3: 'Poor',
-            4: 'Delayed',
-            5: 'Inconclusive'
-        }
+        'Bladder_neck_relaxation': {0: 'Fair', 1: 'Acceptable', 2: 'Impaired', 3: 'Poor', 4: 'Delayed', 5: 'Inconclusive'},
+        'External_sphincter_relaxation': {0: 'Fair', 1: 'Acceptable', 2: 'Impaired', 3: 'Poor', 4: 'Delayed', 5: 'Inconclusive'},
+        'Pelvic_floor_relaxation': {0: 'Fair', 1: 'Acceptable', 2: 'Impaired', 3: 'Poor', 4: 'Delayed', 5: 'Inconclusive'}
     }
 }
 
-# Number of classes for each task
+# Number of classes for each label
 NUM_CLASSES = {
     'pftg': {'Detrusor_instability': 2},
     'pfus': {'Flow_pattern': 6, 'EMG_ES_relaxation': 5},
@@ -96,70 +62,60 @@ NUM_CLASSES = {
 }
 
 def parse_args():
+    # Parse command line arguments for inference
     parser = argparse.ArgumentParser(description="Inference script for VUDS-AI")
-    parser.add_argument("--model_dir", type=str, required=True,
-                        help="Directory containing model files")
-    parser.add_argument("--img", type=str, help="Path to single image")
-    parser.add_argument("--dir", type=str, help="Path to directory of images")
-    parser.add_argument("--output", type=str, default='output.txt',
-                        help="Output label file path")
+    parser.add_argument("--model_dir", type=str, required=True, help="Directory containing model files")
+    parser.add_argument("--img", type=str, help="Path to a single image file")
+    parser.add_argument("--dir", type=str, help="Path to a directory of images")
+    parser.add_argument("--output", type=str, default='output.txt', help="Path for output text file")
     return parser.parse_args()
 
 def setup_image_extractor():
-    """Setup OCR and patterns for image extraction"""
+    # Setup OCR engine and pattern for identifying x-ray captions
     ocr = PaddleOCR(use_angle_cls=True, lang="en", show_log=False, use_gpu=False)
     pattern = re.compile(r".*\d+\s*(?:record|single\s*capture)$", re.IGNORECASE)
     return ocr, pattern
 
 def extract_all_regions(img_path, ocr, pattern):
-    """Extract and classify all regions from an image"""
-    print(f"\n🔍 Processing image: {os.path.basename(img_path)}")
+    # Extract and classify regions (pftg, pfus, xray) from the image
+    print(f"Processing image: {os.path.basename(img_path)}")
     pil_img = Image.open(img_path).convert("RGB")
     np_img = np.array(pil_img)
     print("Running OCR...")
     results = ocr.ocr(np_img, cls=True)
-    regions = {
-        'pftg': {'exists': False, 'regions': []},
-        'pfus': {'exists': False, 'regions': []},
-        'xray': {'exists': False, 'regions': []}
-    }
+    regions = {task: {'exists': False, 'regions': []} for task in ['pftg', 'pfus', 'xray']}
     text_blocks = []
     for line in results:
         for box, (txt, _) in line:
             xs = [pt[0] for pt in box]
             ys = [pt[1] for pt in box]
             text_blocks.append(lp.TextBlock(
-                lp.Rectangle(int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))),
-                text=txt
-            ))
+                lp.Rectangle(int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))), text=txt))
     for blk in text_blocks:
         text_lower = blk.text.lower()
+        tx1, ty1, tx2, ty2 = map(int, blk.coordinates)
         if "pressure flow uroflow segment" in text_lower:
-            tx1, ty1, tx2, ty2 = map(int, blk.coordinates)
             regions['pfus']['exists'] = True
             regions['pfus']['regions'].append(np_img[ty1:ty2, tx1:tx2])
-            print(f"Found PFUS region at coordinates: ({tx1}, {ty1}, {tx2}, {ty2})")
+            print(f"Found PFUS region at: {tx1},{ty1},{tx2},{ty2}")
         elif "pressure flow test graph" in text_lower:
-            tx1, ty1, tx2, ty2 = map(int, blk.coordinates)
             regions['pftg']['exists'] = True
             regions['pftg']['regions'].append(np_img[ty1:ty2, tx1:tx2])
-            print(f"Found PFTG region at coordinates: ({tx1}, {ty1}, {tx2}, {ty2})")
+            print(f"Found PFTG region at: {tx1},{ty1},{tx2},{ty2}")
         elif pattern.match(text_lower.strip()):
-            tx1, ty1, tx2, ty2 = map(int, blk.coordinates)
             pad = 50
             regions['xray']['exists'] = True
             regions['xray']['regions'].append(
                 np_img[max(0, ty1-pad):min(np_img.shape[0], ty2+pad), 
-                      max(0, tx1-pad):min(np_img.shape[1], tx2+pad)]
-            )
-            print(f"Found X-ray region at coordinates: ({tx1}, {ty1}, {tx2}, {ty2})")
-    print("\n📊 Region Detection Summary:")
-    print(f"PFUS regions found: {len(regions['pfus']['regions'])}")
-    print(f"PFTG regions found: {len(regions['pftg']['regions'])}")
-    print(f"X-ray regions found: {len(regions['xray']['regions'])}")
+                       max(0, tx1-pad):min(np_img.shape[1], tx2+pad)])
+            print(f"Found X-ray region at: {tx1},{ty1},{tx2},{ty2}")
+    print("\nRegion Detection Summary:")
+    for t in ['pfus', 'pftg', 'xray']:
+        print(f"{t.upper()} regions found: {len(regions[t]['regions'])}")
     return regions
 
 def load_model(task, model_path):
+    # Load a pretrained ResNet18 model and adjust classifier for the task
     filename = os.path.basename(model_path)
     task_name = '_'.join(filename.split('_')[1:-1])
     if task_name not in NUM_CLASSES[task]:
@@ -171,9 +127,9 @@ def load_model(task, model_path):
     try:
         state_dict = torch.load(model_path, map_location='cpu')
         model.load_state_dict(state_dict, strict=False)
-        print(f"Successfully loaded model weights for {task_name}")
+        print(f"Loaded weights for {task_name}")
     except Exception as e:
-        print(f"Warning loading weights for {task_name}: {str(e)}")
+        print(f"Warning loading weights: {e}")
         if 'fc.weight' in state_dict and 'fc.bias' in state_dict:
             model.fc.weight.data = state_dict['fc.weight']
             model.fc.bias.data = state_dict['fc.bias']
@@ -184,158 +140,162 @@ def load_model(task, model_path):
     return model, task_name
 
 def predict_image(model, img_array):
-    tfm = transforms.Compose([
+    # Predict label for a single image array
+    transform = transforms.Compose([
         transforms.ToPILImage(),
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
-    img_tensor = tfm(img_array).unsqueeze(0)
+    tensor = transform(img_array).unsqueeze(0)
     with torch.no_grad():
-        out = model(img_tensor)
+        out = model(tensor)
         pred = torch.argmax(out, dim=1).item()
     return pred
 
 def get_default_results():
-    return {key: 'NA' for key in [
-        'Detrusor_instability','Flow_pattern','EMG_ES_relaxation',
-        'Trabeculation','Diverticulum','Cystocele','VUR',
-        'Bladder_neck_relaxation','External_sphincter_relaxation','Pelvic_floor_relaxation'
-    ]}
+    # Initialize default results dictionary with 'NA'
+    keys = ['Detrusor_instability','Flow_pattern','EMG_ES_relaxation',
+            'Trabeculation','Diverticulum','Cystocele','VUR',
+            'Bladder_neck_relaxation','External_sphincter_relaxation','Pelvic_floor_relaxation']
+    return {k: 'NA' for k in keys}
 
 def write_results_to_file(results, output_path):
+    # Write prediction results to a text file
     with open(output_path, 'w') as f:
         f.write(f"Detrusor_instability: {results['Detrusor_instability']}\n\n")
         f.write("Pressure flow study\n")
         f.write(f"Flow_pattern: {results['Flow_pattern']}\n")
         f.write(f"EMG_ES_relaxation: {results['EMG_ES_relaxation']}\n\n")
-        f.write("Fluroscopy in VUDS\n")
+        f.write("Fluoroscopy in VUDS\n")
         for lbl in ['Trabeculation','Diverticulum','Cystocele','VUR',
                     'Bladder_neck_relaxation','External_sphincter_relaxation','Pelvic_floor_relaxation']:
             f.write(f"{lbl}: {results[lbl]}\n")
 
 def predict_all_tasks(regions, model_dir):
+    # Predict across all tasks and aggregate results
     results = get_default_results()
-    print("\n🤖 Starting prediction for all tasks...")
+    print("\nStarting prediction for all tasks...")
     for task in ['pftg','pfus','xray']:
         if not regions[task]['exists']:
             print(f"No {task} regions, skipping")
             continue
         for mfile in os.listdir(model_dir):
             if mfile.startswith(task) and mfile.endswith('.pth'):
-                model, task_name = load_model(task, os.path.join(model_dir,mfile))
+                model, task_name = load_model(task, os.path.join(model_dir, mfile))
                 for region in regions[task]['regions']:
                     pred = predict_image(model, region)
                     results[task_name] = LABEL_MAP[task][task_name][pred]
-    print("\n📊 Final Prediction Results:")
-    for k,v in results.items(): print(f"{k}: {v}")
+    print("\nFinal Prediction Results:")
+    for k, v in results.items():
+        print(f"{k}: {v}")
     return results
 
 def process_images(img_paths, model_dir, ocr, pattern):
-    all_results = get_default_results()
+    # Process list of images and collect combined results
+    combined = get_default_results()
     for img_path in img_paths:
         regions = extract_all_regions(img_path, ocr, pattern)
         res = predict_all_tasks(regions, model_dir)
-        for k,v in res.items():
-            if v!='NA': all_results[k]=v
-    print("\n📊 Combined Results:" , all_results)
-    return all_results
+        for k, v in res.items():
+            if v != 'NA':
+                combined[k] = v
+    print("\nCombined Results:", combined)
+    return combined
 
-# A4 layout constants
+# Constants for A4 PDF layout
 PAGE_W, PAGE_H = A4
 MARGIN = 40
-TITLE_Y = PAGE_H - 60
-IMG_MAX_W = PAGE_W - 2*MARGIN
+IMG_MAX_W = PAGE_W - 2 * MARGIN
 IMG_MAX_H = PAGE_H - 140
 
 def _collect_images_by_type(dirs):
-    return {typ: sorted(glob.glob(os.path.join(dirs[typ],"*.jpg")))
-            for typ in ('pfus','pftg','xray')}
+    # Collect image file paths by type
+    return {typ: sorted(glob.glob(os.path.join(dirs[typ], "*.jpg"))) for typ in ['pfus', 'pftg', 'xray']}
 
 def make_a4_pdf(images_dict, pdf_path):
+    # Create an A4 PDF with extracted images
     c = canvas.Canvas(pdf_path, pagesize=A4)
     for typ, imgs in images_dict.items():
         for img_p in imgs:
             c.setFont("Helvetica-Bold", 18)
-            c.drawCentredString(PAGE_W/2, TITLE_Y, typ.upper())
+            c.drawCentredString(PAGE_W/2, PAGE_H - 60, typ.upper())
             img = ImageReader(img_p)
             iw, ih = img.getSize()
             scale = min(IMG_MAX_W/iw, IMG_MAX_H/ih)
-            w, h = iw*scale, ih*scale
-            x = (PAGE_W - w)/2
-            y = (PAGE_H - h)/2 - 20
+            w, h = iw * scale, ih * scale
+            x = (PAGE_W - w) / 2
+            y = (PAGE_H - h) / 2 - 20
             c.drawImage(img, x, y, width=w, height=h)
             c.showPage()
     c.save()
-    print(f"📄 A4 PDF saved → {pdf_path}")
+    print(f"A4 PDF saved: {pdf_path}")
 
 def _predict_from_extracted(dirs, model_dir):
+    # Predict labels from previously extracted images
     results = get_default_results()
-    task_dirs = {'pftg':dirs['pftg'],'pfus':dirs['pfus'],'xray':dirs['xray']}
-    for task, d in task_dirs.items():
+    for task in ['pftg', 'pfus', 'xray']:
         for mfile in os.listdir(model_dir):
             if mfile.startswith(task) and mfile.endswith('.pth'):
-                model, task_name = load_model(task, os.path.join(model_dir,mfile))
-                for img_p in sorted(glob.glob(os.path.join(d,'*.jpg'))):
+                model, task_name = load_model(task, os.path.join(model_dir, mfile))
+                for img_p in sorted(glob.glob(os.path.join(dirs[task], '*.jpg'))):
                     img = cv2.cvtColor(cv2.imread(img_p), cv2.COLOR_BGR2RGB)
                     pred = predict_image(model, img)
                     results[task_name] = LABEL_MAP[task][task_name][pred]
-    print("\n📊 Label Prediction Summary", results)
+    print("\nLabel Prediction Summary:", results)
     return results
 
-# ---------- 1️⃣ 第一版 test_inference ----------
+# First inference interface
 def test_inference(model_dir, img=None, dir_path=None, output_txt="output.txt"):
+    # Run test inference with either single image or directory
     ocr, pattern = setup_image_extractor()
     if img:
         results = process_images([img], model_dir, ocr, pattern)
     elif dir_path:
-        imgs = glob.glob(os.path.join(dir_path,"*.jpg"))
+        imgs = glob.glob(os.path.join(dir_path, "*.jpg"))
         results = process_images(imgs, model_dir, ocr, pattern)
     else:
         raise ValueError("Provide --img or --dir")
     write_results_to_file(results, output_txt)
-    print(f"[Test-Inference] Results → {output_txt}")
+    print(f"Test Inference results saved to: {output_txt}")
     return results
 
-# ---------- 3️⃣ 第二版 inference_v2 ----------
-def inference_v2(path, model_dir=None, pdf_name="output.pdf",
-                 txt_name="output.txt", keep_output_folder=True):
+# Second inference interface with PDF output
+def inference_v2(path, model_dir=None, pdf_name="vuds.pdf", txt_name="vuds.txt", keep_output_folder=True):
+    # Main inference function that extracts templates, predicts, and creates output files
     path = os.path.abspath(path)
-    model_dir = os.path.abspath(model_dir or os.path.join(path,"models"))
+    model_dir = os.path.abspath(model_dir or os.path.join(path, "models"))
     if not os.path.isdir(model_dir):
-        raise FileNotFoundError(f"模型資料夾不存在: {model_dir}")
-    jpgs = glob.glob(os.path.join(path,"*.jpg"))
-    if not jpgs: raise ValueError(f"{path} 無 .jpg 圖片")
+        raise FileNotFoundError(f"Model directory not found: {model_dir}")
+    jpgs = glob.glob(os.path.join(path, "*.jpg"))
+    if not jpgs:
+        raise ValueError(f"No jpg images in path: {path}")
     if keep_output_folder:
-        extract_base = path; tmp_root=None
+        extract_base = path
     else:
-        tmp_root = tempfile.mkdtemp(prefix="vuds_tmp_")
-        extract_base = tmp_root
-        print(f"🗄️ 暫存抽圖: {extract_base}")
+        extract_base = tempfile.mkdtemp(prefix="vuds_tmp_")
+        print(f"Temporary folder for extraction: {extract_base}")
     from extract_templates import setup_vuds_extractor, process_image
     ocr, templates, summary_cfg, labels, units, dirs, pattern, fluoro_cfg = setup_vuds_extractor("template_config.json", extract_base)
     for jpg in jpgs:
         process_image(jpg, ocr, templates, summary_cfg, labels, units, dirs, pattern, fluoro_cfg)
     results = _predict_from_extracted(dirs, model_dir)
     images_dict = _collect_images_by_type(dirs)
-    pdf_path = os.path.join(path,pdf_name)
-    if any(images_dict.values()): make_a4_pdf(images_dict,pdf_path)
-    else: print("⚠️ 無裁切影像，僅 TXT")
-    txt_path = os.path.join(path,txt_name)
-    write_results_to_file(results,txt_path)
-    print(f"📝 TXT → {txt_path}")
-    if not keep_output_folder and tmp_root:
-        shutil.rmtree(tmp_root,ignore_errors=True)
-        print(f"🧹 刪除暫存: {tmp_root}")
+    pdf_path = os.path.join(path, pdf_name)
+    if any(images_dict.values()):
+        make_a4_pdf(images_dict, pdf_path)
+    else:
+        print("No extracted images, only TXT output")
+    txt_path = os.path.join(path, txt_name)
+    write_results_to_file(results, txt_path)
+    print(f"Text results saved to: {txt_path}")
+    if not keep_output_folder and 'extract_base' in locals():
+        shutil.rmtree(extract_base, ignore_errors=True)
+        print(f"Removed temporary folder: {extract_base}")
     return pdf_path, txt_path
 
-
+# Entry point for script execution
 def main():
-    # args = parse_args()
-    # if args.img or args.dir:
-    #     test_inference(args.model_dir, img=args.img, dir_path=args.dir, output_txt=args.output)
-    # else:
-    #     inference_v2(".", model_dir=args.model_dir)
     inference_v2("../../test_case", model_dir="../../models")
 
 if __name__ == '__main__':

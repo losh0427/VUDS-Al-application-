@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Training script for VUDS-AI: train one model per label condition
 import argparse
 import os
 import pandas as pd
@@ -10,13 +13,16 @@ import json
 
 
 def parse_args():
+    # Parse command line arguments
     parser = argparse.ArgumentParser(
         description="Training script for VUDS-AI: train one model per label condition")
     parser.add_argument("--data_dir", type=str, required=True,
                         help="Path to processed dataset directory containing metadata/")
-    parser.add_argument("--model_type", type=str, required=True, choices=["pftg", "pfus", "xray"], help="Dataset type: pftg, pfus, or xray")
+    parser.add_argument("--model_type", type=str, required=True,
+                        choices=["pftg", "pfus", "xray"],
+                        help="Dataset type: pftg, pfus, or xray")
     parser.add_argument("--backbone", type=str, default="resnet18",
-                        choices=["resnet18","densenet121"],
+                        choices=["resnet18", "densenet121"],
                         help="Backbone model architecture")
     parser.add_argument("--epochs", type=int, default=5,
                         help="Number of training epochs per condition")
@@ -30,6 +36,7 @@ def parse_args():
 
 
 class ImageDataset(Dataset):
+    # Custom dataset class for loading images and labels
     def __init__(self, images_dir, labels_df, transform=None):
         self.images_dir = images_dir
         self.labels_df = labels_df.reset_index(drop=True)
@@ -49,6 +56,7 @@ class ImageDataset(Dataset):
 
 
 def build_model(backbone_name, num_classes):
+    # Build the backbone model and adjust final layer
     if backbone_name == 'resnet18':
         model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
         in_features = model.fc.in_features
@@ -61,38 +69,36 @@ def build_model(backbone_name, num_classes):
 
 
 def train_condition(data_dir, model_type, condition, backbone, epochs, batch_size, lr, output_dir):
-    # Load labels for this condition
+    # Train a model for a single condition label
     csv_path = os.path.join(data_dir, 'metadata', f"{model_type}_train.csv")
     df = pd.read_csv(csv_path)
     if condition not in df.columns:
         raise KeyError(f"Condition '{condition}' not found in CSV columns")
 
     cond_df = df[['filename', condition]].rename(columns={condition: 'label'})
-    # Ensure labels are numeric
     cond_df['label'] = cond_df['label'].astype(int)
 
-    # Print distribution
+    # Print positive/negative distribution
     pos = cond_df['label'].sum()
     neg = len(cond_df) - pos
     print(f"Condition {condition}: Positive={pos}, Negative={neg}")
 
-    # Dataset and loader
+    # Prepare dataset and dataloader
     transform = transforms.Compose([
-        transforms.Resize((224,224)),
+        transforms.Resize((224, 224)),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225])
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
     images_dir = os.path.join(data_dir, 'images', model_type)
     dataset = ImageDataset(images_dir, cond_df, transform)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-    # Build model
+    # Initialize model, loss, and optimizer
     num_classes = cond_df['label'].nunique()
     model = build_model(backbone, num_classes)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model.to(device)
 
-    # Loss and optimizer
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -111,64 +117,43 @@ def train_condition(data_dir, model_type, condition, backbone, epochs, batch_siz
         avg_loss = total_loss / len(loader)
         print(f"[{condition}] Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f}")
 
-    # Save model
+    # Save trained model
     os.makedirs(output_dir, exist_ok=True)
     out_path = os.path.join(output_dir, f"{model_type}_{condition}_{backbone}.pth")
     torch.save(model.state_dict(), out_path)
     print(f"Saved model for {condition} to {out_path}\n")
 
 
-def main():
-    args = parse_args()
-    # 先呼叫 prepare_dataset 產生訓練 csv 檔案，再讀取該檔案
-    csv_path, num_conditions = prepare_dataset(args.data_dir, args.model_type)
-    df = pd.read_csv(csv_path)
-    # 只選擇對應這個 model_type 的 label
-    conditions = [c for c in df.columns if c != 'filename' and LABEL_TO_DATASET.get(c) == args.model_type]
-    print(f"Loaded dataset: {csv_path}")
-    for condition in conditions:
-        train_condition(args.data_dir, args.model_type, condition, args.backbone, args.epochs, args.batch_size, args.lr, args.output_dir)
-
-
 def prepare_dataset(data_dir, model_type):
-    """
-    Prepare dataset for training by converting the metadata format
-    """
-    # Read the original metadata (檔案名稱格式為 {model_type}_samples.csv)
+    # Prepare training CSV from metadata and label statistics
     metadata_path = os.path.join(data_dir, 'metadata', f'{model_type}_samples.csv')
     df = pd.read_csv(metadata_path)
-    print("DEBUG: 讀取 metadata 檔案 ({}):\n{}".format(metadata_path, df.head()))
-    
-    # Read label statistics
+    print("DEBUG: Loaded metadata file ({}) head:\n{}".format(metadata_path, df.head()))
+
+    # Load label statistics and counts
     label_stats_path = os.path.join(data_dir, 'metadata', 'label_stats.json')
     with open(label_stats_path, 'r') as f:
         label_stats = json.load(f)
-    
-    # Read label counts
     label_counts_path = os.path.join(data_dir, 'analysis', 'label_counts.json')
     with open(label_counts_path, 'r') as f:
         label_counts = json.load(f)
-    
-    # 僅保留 .jpg 圖片檔案
+
+    # Filter only .jpg files
     df = df[df['img_path'].str.endswith('.jpg')].reset_index(drop=True)
-    
-    # Create training dataframe
+
+    # Create training DataFrame
     train_df = pd.DataFrame()
     train_df['filename'] = df['img_path'].apply(lambda x: x.split('/')[-1])
-    
-    # Initialize all conditions with 0
+
+    # Initialize all conditions to 0
     for condition in label_stats.keys():
         train_df[condition] = 0
-    
-    # Process each condition
+
+    # Assign labels for each condition
     for condition in label_stats.keys():
         if condition in label_counts:
-            # Get the label distribution
             label_dist = label_counts[condition]
-            
-            # For binary conditions
             if condition in ['Detrusor_instability', 'Trabeculation', 'Diverticulum', 'Cystocele', 'VUR']:
-                # Use the most common positive label as threshold
                 positive_labels = [k for k, v in label_dist.items() if '1' in k]
                 if positive_labels:
                     most_common_positive = max(positive_labels, key=lambda x: label_dist[x])
@@ -176,26 +161,26 @@ def prepare_dataset(data_dir, model_type):
                         lambda x: 1 if any(str(i) in x.split('_')[-2] for i in most_common_positive.split(',')) else 0
                     )
             else:
-                # For multi-class conditions, use presence of '1' as positive
                 train_df[condition] = df['img_path'].apply(
                     lambda x: 1 if '1' in x.split('_')[-2] else 0
                 )
-    
+
     # Save processed dataset
     output_path = os.path.join(data_dir, 'metadata', f'{model_type}_train.csv')
     train_df.to_csv(output_path, index=False)
     print(f"Processed dataset saved to {output_path}")
-    
-    # Print label distribution
+
+    # Print label distribution summary
     print("\nLabel distribution:")
     for condition in label_stats.keys():
         positive = (train_df[condition] == 1).sum()
         negative = (train_df[condition] == 0).sum()
         print(f"{condition}: Positive={positive}, Negative={negative}")
-    
+
     return output_path, len(label_stats)
 
 
+# Mapping from label to dataset type
 LABEL_TO_DATASET = {
     "Detrusor_instability": "pftg",
     "Flow_pattern": "pfus",
@@ -208,6 +193,30 @@ LABEL_TO_DATASET = {
     "External_sphincter_relaxation": "xray",
     "Pelvic_floor_relaxation": "xray"
 }
+
+
+def main():
+    args = parse_args()
+    # Generate training CSV and get number of conditions
+    csv_path, num_conditions = prepare_dataset(args.data_dir, args.model_type)
+    df = pd.read_csv(csv_path)
+
+    # Select conditions relevant to the model_type
+    conditions = [c for c in df.columns if c != 'filename' and LABEL_TO_DATASET.get(c) == args.model_type]
+    print(f"Loaded training CSV: {csv_path}")
+
+    # Train a model for each condition
+    for condition in conditions:
+        train_condition(
+            args.data_dir,
+            args.model_type,
+            condition,
+            args.backbone,
+            args.epochs,
+            args.batch_size,
+            args.lr,
+            args.output_dir
+        )
 
 
 if __name__ == '__main__':

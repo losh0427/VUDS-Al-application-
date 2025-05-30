@@ -3,42 +3,48 @@ import json
 import re
 from pathlib import Path
 
+# List of label keys for report analysis
 LABEL_KEYS = [
     "Detrusor_instability", "Flow_pattern", "EMG_ES_relaxation",
     "Trabeculation", "Diverticulum", "Cystocele", "VUR",
     "Bladder_neck_relaxation", "External_sphincter_relaxation",
     "Pelvic_floor_relaxation"
 ]
+
+# Types of data outputs to check within each report
 DATA_TYPES = ["pftg", "pfus", "pfs", "xray"]
 
 
 def is_all_na(txt_path: Path) -> bool:
-    """判斷 output.txt 是否全部 NA / N/A / 空"""
+    # Determine if output.txt contains only NA, N/A, or is empty
     if not txt_path.is_file():
         return True
     content = txt_path.read_text(encoding="utf-8", errors="ignore").lower()
+    # If none of the label keys appear in the content, treat as missing
     if not any(k.lower() in content for k in LABEL_KEYS):
         return True
+    # Filter out blank lines and count lines
     lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
+    # Count lines where the value part is NA, N/A, none, or blank
     blanks = sum(
         bool(re.search(r'\bna\b|n/a|none|^\s*$', ln.split(":")[-1], re.I))
         for ln in lines
     )
+    # Return True if all lines are blanks
     return blanks == len(lines)
 
 
 def scan_report(report_dir: Path):
-    """
-    掃描單份報告，回傳含有哪些 data 類型與 label 狀態
-    """
+    # Scan a single report directory and return available data types and text status
     out_root = report_dir / "output"
     has = {}
-    # 檢查每種 data type 檔案數量
+    # Count files for each data type
     for t in DATA_TYPES:
-        cnt = len(list((out_root / t).glob("*.*"))) if (out_root / t).exists() else 0
-        has[t] = cnt
+        data_dir = out_root / t
+        count = len(list(data_dir.glob("*.*"))) if data_dir.exists() else 0
+        has[t] = count
 
-    # 判斷文字報告
+    # Check text report
     txt_path = out_root / "result" / "output.txt"
     text_na = is_all_na(txt_path)
 
@@ -46,26 +52,28 @@ def scan_report(report_dir: Path):
 
 
 def check_report(report_dir: Path):
-    """
-    回傳 (是否有效, 無效原因, has)
-    missing only if all DATA_TYPES and text are missing
-    """
-    if "(請確認" in report_dir.name:
+    # Determine if a report is valid, and provide reason if invalid
+    # Skip directories with confirmation prefix
+    if "(" in report_dir.name:
         return False, "confirm_prefix", {}
 
+    # Ensure output directory exists
     if not (report_dir / "output").exists():
         return False, "no_output_dir", {}
 
     has, text_na = scan_report(report_dir)
-    # 若所有四種都沒，以及文字報告全 NA，則 invalid
+    # If all data types are missing and text report is blank, mark invalid
     if all(v == 0 for v in has.values()) and text_na:
         return False, "all_data_missing", has
 
+    # Otherwise, report is valid
     return True, "", has
 
 
 def scan_raw_dataset(raw_dir: Path):
-    valid, invalid = [], []
+    # Iterate over patients and their reports to classify each report
+    valid = []
+    invalid = []
     for patient_dir in sorted(raw_dir.iterdir()):
         if not patient_dir.is_dir():
             continue
@@ -89,31 +97,40 @@ def scan_raw_dataset(raw_dir: Path):
 
 
 def main():
+    # Set up command-line argument parsing
     parser = argparse.ArgumentParser()
-    parser.add_argument("--raw_dir", default="../../raw_dataset",
-                        help="原始 raw_dataset 路徑")
-    parser.add_argument("--out_dir", default="../../",
-                        help="valid/invalid json 要寫到哪個資料夾")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="只顯示統計，不寫檔")
+    parser.add_argument(
+        "--raw_dir", default="../../raw_dataset",
+        help="Path to the original raw_dataset directory"
+    )
+    parser.add_argument(
+        "--out_dir", default="../../",
+        help="Directory where valid/invalid JSON files will be written"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Only display statistics without writing files"
+    )
     args = parser.parse_args()
 
     raw_dir = Path(args.raw_dir).resolve()
     out_dir = Path(args.out_dir).resolve()
     valid, invalid = scan_raw_dataset(raw_dir)
 
-    print(f"Total reports: {len(valid)+len(invalid)}")
+    # Print summary of results
+    print(f"Total reports: {len(valid) + len(invalid)}")
     print(f"  ✔ valid    : {len(valid)}")
     print(f"  ✘ invalid  : {len(invalid)}")
 
     if not args.dry_run:
+        # Write JSON output files
         (out_dir / "valid_reports.json").write_text(
             json.dumps(valid, indent=2, ensure_ascii=False)
         )
         (out_dir / "invalid_reports.json").write_text(
             json.dumps(invalid, indent=2, ensure_ascii=False)
         )
-        print(f"JSON written to {out_dir}")
+        print(f"JSON files written to {out_dir}")
 
 
 if __name__ == "__main__":
