@@ -75,8 +75,22 @@ def train_condition(data_dir, model_type, condition, backbone, epochs, batch_siz
     if condition not in df.columns:
         raise KeyError(f"Condition '{condition}' not found in CSV columns")
 
+    # Handle NaN values and comma-separated labels
     cond_df = df[['filename', condition]].rename(columns={condition: 'label'})
-    cond_df['label'] = cond_df['label'].astype(int)
+    
+    # Convert labels to numeric values
+    def convert_label(x):
+        if pd.isna(x):
+            return 0
+        try:
+            # If it's a comma-separated string, take the first value
+            if isinstance(x, str) and ',' in x:
+                return int(x.split(',')[0])
+            return int(float(x))
+        except (ValueError, TypeError):
+            return 0
+    
+    cond_df['label'] = cond_df['label'].apply(convert_label)
 
     # Print positive/negative distribution
     pos = cond_df['label'].sum()
@@ -125,18 +139,10 @@ def train_condition(data_dir, model_type, condition, backbone, epochs, batch_siz
 
 
 def prepare_dataset(data_dir, model_type):
-    # Prepare training CSV from metadata and label statistics
+    # Prepare training CSV from metadata
     metadata_path = os.path.join(data_dir, 'metadata', f'{model_type}_samples.csv')
     df = pd.read_csv(metadata_path)
     print("DEBUG: Loaded metadata file ({}) head:\n{}".format(metadata_path, df.head()))
-
-    # Load label statistics and counts
-    label_stats_path = os.path.join(data_dir, 'metadata', 'label_stats.json')
-    with open(label_stats_path, 'r') as f:
-        label_stats = json.load(f)
-    label_counts_path = os.path.join(data_dir, 'analysis', 'label_counts.json')
-    with open(label_counts_path, 'r') as f:
-        label_counts = json.load(f)
 
     # Filter only .jpg files
     df = df[df['img_path'].str.endswith('.jpg')].reset_index(drop=True)
@@ -145,25 +151,12 @@ def prepare_dataset(data_dir, model_type):
     train_df = pd.DataFrame()
     train_df['filename'] = df['img_path'].apply(lambda x: x.split('/')[-1])
 
-    # Initialize all conditions to 0
-    for condition in label_stats.keys():
-        train_df[condition] = 0
-
-    # Assign labels for each condition
-    for condition in label_stats.keys():
-        if condition in label_counts:
-            label_dist = label_counts[condition]
-            if condition in ['Detrusor_instability', 'Trabeculation', 'Diverticulum', 'Cystocele', 'VUR']:
-                positive_labels = [k for k, v in label_dist.items() if '1' in k]
-                if positive_labels:
-                    most_common_positive = max(positive_labels, key=lambda x: label_dist[x])
-                    train_df[condition] = df['img_path'].apply(
-                        lambda x: 1 if any(str(i) in x.split('_')[-2] for i in most_common_positive.split(',')) else 0
-                    )
-            else:
-                train_df[condition] = df['img_path'].apply(
-                    lambda x: 1 if '1' in x.split('_')[-2] else 0
-                )
+    # Get all label columns (excluding metadata columns)
+    label_columns = [col for col in df.columns if col not in ['sample_id', 'patient_id', 'report_id', 'img_path']]
+    
+    # Copy labels directly from original DataFrame
+    for label in label_columns:
+        train_df[label] = df[label]
 
     # Save processed dataset
     output_path = os.path.join(data_dir, 'metadata', f'{model_type}_train.csv')
@@ -172,12 +165,12 @@ def prepare_dataset(data_dir, model_type):
 
     # Print label distribution summary
     print("\nLabel distribution:")
-    for condition in label_stats.keys():
-        positive = (train_df[condition] == 1).sum()
-        negative = (train_df[condition] == 0).sum()
-        print(f"{condition}: Positive={positive}, Negative={negative}")
+    for label in label_columns:
+        positive = (train_df[label] == 1).sum()
+        negative = (train_df[label] == 0).sum()
+        print(f"{label}: Positive={positive}, Negative={negative}")
 
-    return output_path, len(label_stats)
+    return output_path, len(label_columns)
 
 
 # Mapping from label to dataset type
