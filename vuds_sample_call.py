@@ -194,7 +194,7 @@ def main():
             model_type="pftg"
         )
         print("PFTG model training successful")
-        print(f"Model path: {pftg_result['model_path']}")
+        # print(f"Model path: {pftg_result['model_path']}")
         
         # Train PFUS model
         print("\n--- Training PFUS Model ---")
@@ -203,7 +203,7 @@ def main():
             model_type="pfus"
         )
         print("PFUS model training successful")
-        print(f"Model path: {pfus_result['model_path']}")
+        # print(f"Model path: {pfus_result['model_path']}")
         
         # Train XRAY model
         print("\n--- Training XRAY Model ---")
@@ -212,7 +212,7 @@ def main():
             model_type="xray"
         )
         print("XRAY model training successful")
-        print(f"Model path: {xray_result['model_path']}")
+        # print(f"Model path: {xray_result['model_path']}")
 
         # 7. Run inference
         print("\n=== Starting Inference ===")

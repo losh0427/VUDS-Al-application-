@@ -98,6 +98,40 @@ def build_model(backbone_name, num_classes):
     return model
 
 
+# Add the same label maps as in inference.py
+LABEL_MAP = {
+    'pftg': {
+        'Detrusor_instability': {0: 'No', 1: 'Yes'}
+    },
+    'pfus': {
+        'Flow_pattern': {0: 'Obstruction', 1: 'Intermittent', 2: 'Interrupted', 3: 'Staccato', 4: 'Supervoider', 5: 'Bell'},
+        'EMG_ES_relaxation': {0: 'Fair', 1: 'Acceptable', 2: 'Impaired', 3: 'Poor', 4: 'Artifact'}
+    },
+    'xray': {
+        'Trabeculation': {0: 'No', 1: 'Yes'},
+        'Diverticulum': {0: 'No', 1: 'Yes'},
+        'Cystocele': {0: 'No', 1: 'Yes'},
+        'VUR': {0: 'No', 1: 'Yes'},
+        'Bladder_neck_relaxation': {0: 'Fair', 1: 'Acceptable', 2: 'Impaired', 3: 'Poor', 4: 'Delayed', 5: 'Inconclusive'},
+        'External_sphincter_relaxation': {0: 'Fair', 1: 'Acceptable', 2: 'Impaired', 3: 'Poor', 4: 'Delayed', 5: 'Inconclusive'},
+        'Pelvic_floor_relaxation': {0: 'Fair', 1: 'Acceptable', 2: 'Impaired', 3: 'Poor', 4: 'Delayed', 5: 'Inconclusive'}
+    }
+}
+
+NUM_CLASSES = {
+    'pftg': {'Detrusor_instability': 2},
+    'pfus': {'Flow_pattern': 6, 'EMG_ES_relaxation': 5},
+    'xray': {
+        'Trabeculation': 2,
+        'Diverticulum': 2,
+        'Cystocele': 2,
+        'VUR': 2,
+        'Bladder_neck_relaxation': 6,
+        'External_sphincter_relaxation': 6,
+        'Pelvic_floor_relaxation': 6
+    }
+}
+
 def train_condition(data_dir, model_type, condition, backbone, epochs, batch_size, lr, output_dir):
     # Train a model for a single condition label
     csv_path = os.path.join(data_dir, 'metadata', f"{model_type}_train.csv")
@@ -105,27 +139,43 @@ def train_condition(data_dir, model_type, condition, backbone, epochs, batch_siz
     if condition not in df.columns:
         raise KeyError(f"Condition '{condition}' not found in CSV columns")
 
+    # Get fixed number of classes from NUM_CLASSES
+    num_classes = NUM_CLASSES[model_type][condition]
+    print(f"\nFixed number of classes for {condition}: {num_classes}")
+    print(f"Expected label mapping: {LABEL_MAP[model_type][condition]}")
+
     # Handle NaN values and comma-separated labels
     cond_df = df[['filename', condition]].rename(columns={condition: 'label'})
 
     # Convert labels to numeric values
     def convert_label(x):
         if pd.isna(x):
-            return 0
+            return None  # Keep NaN as None
         try:
             # If it's a comma-separated string, take the first value
             if isinstance(x, str) and ',' in x:
                 return int(x.split(',')[0])
             return int(float(x))
         except (ValueError, TypeError):
-            return 0
+            return None  # Return None for invalid values
 
     cond_df['label'] = cond_df['label'].apply(convert_label)
+    
+    # Remove rows with None labels
+    cond_df = cond_df.dropna(subset=['label'])
 
-    # Print positive/negative distribution
-    pos = cond_df['label'].sum()
-    neg = len(cond_df) - pos
-    print(f"Condition {condition}: Positive={pos}, Negative={neg}")
+    # Print label distribution
+    label_counts = cond_df['label'].value_counts().sort_index()
+    print(f"\nLabel distribution for {condition}:")
+    for label, count in label_counts.items():
+        print(f"Label {label}: {count} samples")
+
+    # Verify that all labels are within expected range
+    valid_labels = set(LABEL_MAP[model_type][condition].keys())
+    invalid_labels = set(cond_df['label'].unique()) - valid_labels
+    if invalid_labels:
+        print(f"Warning: Found invalid labels {invalid_labels}. These will be removed.")
+        cond_df = cond_df[cond_df['label'].isin(valid_labels)]
 
     # Prepare dataset and dataloader
     transform = transforms.Compose([
@@ -137,12 +187,12 @@ def train_condition(data_dir, model_type, condition, backbone, epochs, batch_siz
     dataset = ImageDataset(images_dir, cond_df, transform)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-    # Initialize model, loss, and optimizer
-    num_classes = cond_df['label'].nunique()
+    # Initialize model with fixed number of classes
     model = build_model(backbone, num_classes)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model.to(device)
 
+    # Use CrossEntropyLoss for both binary and multi-class
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -150,6 +200,8 @@ def train_condition(data_dir, model_type, condition, backbone, epochs, batch_siz
     model.train()
     for epoch in range(epochs):
         total_loss = 0.0
+        correct = 0
+        total = 0
         for imgs, labels in loader:
             imgs, labels = imgs.to(device), labels.to(device)
             optimizer.zero_grad()
@@ -158,14 +210,33 @@ def train_condition(data_dir, model_type, condition, backbone, epochs, batch_siz
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
+            
+            # Calculate accuracy
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+        
         avg_loss = total_loss / len(loader)
-        print(f"[{condition}] Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f}")
+        accuracy = 100 * correct / total
+        print(f"[{condition}] Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f}, Accuracy: {accuracy:.2f}%")
 
-    # Save trained model
+    # Save trained model checkpoint (including metadata)
     os.makedirs(output_dir, exist_ok=True)
-    out_path = os.path.join(output_dir, f"{model_type}_{condition}_{backbone}.pth")
-    torch.save(model.state_dict(), out_path)
-    print(f"Saved model for {condition} to {out_path}\n")
+    ckpt = {
+        "state_dict": model.state_dict(),
+        "backbone": backbone,
+        "label": condition,
+        "model_type": model_type,
+        "num_classes": num_classes,
+        "label_map": LABEL_MAP[model_type][condition]  # Save the complete label mapping
+    }
+    out_path = os.path.join(
+        output_dir,
+        f"{model_type}_{condition}_{backbone}.pth"
+    )
+    torch.save(ckpt, out_path)
+    print(f"\nSaved model for {condition} to {out_path}")
+    print(f"Model info: {num_classes} classes, mapping: {LABEL_MAP[model_type][condition]}\n")
 
 
 def prepare_dataset(data_dir, model_type):
