@@ -96,8 +96,47 @@ def scan_raw_dataset(raw_dir: Path):
     return valid, invalid
 
 
+def verify_reports(raw_dir: str = "../../raw_dataset", 
+                  out_dir: str = "../../", 
+                  dry_run: bool = False) -> tuple[list, list]:
+    """
+    Verify reports in the raw dataset directory
+    
+    Args:
+        raw_dir (str): Path to the original raw_dataset directory
+        out_dir (str): Directory where valid/invalid JSON files will be written
+        dry_run (bool): Only display statistics without writing files
+    
+    Returns:
+        tuple[list, list]: (valid_reports, invalid_reports)
+    """
+    # 轉換路徑
+    raw_dir = Path(raw_dir).resolve()
+    out_dir = Path(out_dir).resolve()
+    
+    # 執行驗證
+    valid, invalid = scan_raw_dataset(raw_dir)
+
+    # 輸出結果
+    print(f"Total reports: {len(valid) + len(invalid)}")
+    print(f"  ✔ valid    : {len(valid)}")
+    print(f"  ✘ invalid  : {len(invalid)}")
+    
+    if not dry_run:
+        # 寫入 JSON 檔案
+        (out_dir / "valid_reports.json").write_text(
+            json.dumps(valid, indent=2, ensure_ascii=False)
+        )
+        (out_dir / "invalid_reports.json").write_text(
+            json.dumps(invalid, indent=2, ensure_ascii=False)
+        )
+        print(f"JSON files written to {out_dir}")
+    
+    return valid, invalid
+
+
 def main():
-    # Set up command-line argument parsing
+    """Main function with argument parsing"""
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--raw_dir", default="../../raw_dataset",
@@ -112,25 +151,13 @@ def main():
         help="Only display statistics without writing files"
     )
     args = parser.parse_args()
-
-    raw_dir = Path(args.raw_dir).resolve()
-    out_dir = Path(args.out_dir).resolve()
-    valid, invalid = scan_raw_dataset(raw_dir)
-
-    # Print summary of results
-    print(f"Total reports: {len(valid) + len(invalid)}")
-    print(f"  ✔ valid    : {len(valid)}")
-    print(f"  ✘ invalid  : {len(invalid)}")
-
-    if not args.dry_run:
-        # Write JSON output files
-        (out_dir / "valid_reports.json").write_text(
-            json.dumps(valid, indent=2, ensure_ascii=False)
-        )
-        (out_dir / "invalid_reports.json").write_text(
-            json.dumps(invalid, indent=2, ensure_ascii=False)
-        )
-        print(f"JSON files written to {out_dir}")
+    
+    # 直接調用 verify_reports 函數
+    verify_reports(
+        raw_dir=args.raw_dir,
+        out_dir=args.out_dir,
+        dry_run=args.dry_run
+    )
 
 
 if __name__ == "__main__":

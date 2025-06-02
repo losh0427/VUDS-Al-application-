@@ -145,7 +145,7 @@ def process_report_folder(report_dir):
                 f.write(f"{key}: {all_data[key]}\n")
             f.write("\n")
 
-def batch_process_reports(root_dir="raw_dataset", log_path="report_extraction_log.json"):
+def batch_process_reports(root_dir="../../raw_dataset", log_path="../../report_extraction_log.json"):
     # Batch-process all patient/report folders under root_dir.
     # For each report:
     #  - Locate any PDF matching "<date_str>*.pdf" in the parent folder

@@ -183,7 +183,7 @@ def run_on_report_folder(report_path):
             print(f"? error on {jpg_file}: {e}")
 
 # Batch processing driver
-def batch_process_reports(root_dir="raw_dataset", log_path="extraction_log.json"):
+def batch_process_reports(root_dir="../../raw_dataset", log_path="../../extraction_log.json"):
     if os.path.exists(log_path):
         with open(log_path, "r", encoding="utf-8") as f:
             log = json.load(f)

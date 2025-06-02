@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # Training script for VUDS-AI: train one model per label condition
+
 import argparse
 import os
 import pandas as pd
@@ -15,23 +16,52 @@ import json
 def parse_args():
     # Parse command line arguments
     parser = argparse.ArgumentParser(
-        description="Training script for VUDS-AI: train one model per label condition")
-    parser.add_argument("--data_dir", type=str, required=True,
-                        help="Path to processed dataset directory containing metadata/")
-    parser.add_argument("--model_type", type=str, required=True,
-                        choices=["pftg", "pfus", "xray"],
-                        help="Dataset type: pftg, pfus, or xray")
-    parser.add_argument("--backbone", type=str, default="resnet18",
-                        choices=["resnet18", "densenet121"],
-                        help="Backbone model architecture")
-    parser.add_argument("--epochs", type=int, default=5,
-                        help="Number of training epochs per condition")
-    parser.add_argument("--batch_size", type=int, default=16,
-                        help="Training batch size")
-    parser.add_argument("--lr", type=float, default=1e-3,
-                        help="Learning rate for optimizer")
-    parser.add_argument("--output_dir", type=str, default="models",
-                        help="Directory to save trained models")
+        description="Training script for VUDS-AI: train one model per label condition"
+    )
+    parser.add_argument(
+        "--data_dir",
+        type=str,
+        required=True,
+        help="Path to processed dataset directory containing metadata/"
+    )
+    parser.add_argument(
+        "--model_type",
+        type=str,
+        required=True,
+        choices=["pftg", "pfus", "xray"],
+        help="Dataset type: pftg, pfus, or xray"
+    )
+    parser.add_argument(
+        "--backbone",
+        type=str,
+        default="resnet18",
+        choices=["resnet18", "densenet121"],
+        help="Backbone model architecture"
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=5,
+        help="Number of training epochs per condition"
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=16,
+        help="Training batch size"
+    )
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=1e-3,
+        help="Learning rate for optimizer"
+    )
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="models",
+        help="Directory to save trained models"
+    )
     return parser.parse_args()
 
 
@@ -77,7 +107,7 @@ def train_condition(data_dir, model_type, condition, backbone, epochs, batch_siz
 
     # Handle NaN values and comma-separated labels
     cond_df = df[['filename', condition]].rename(columns={condition: 'label'})
-    
+
     # Convert labels to numeric values
     def convert_label(x):
         if pd.isna(x):
@@ -89,7 +119,7 @@ def train_condition(data_dir, model_type, condition, backbone, epochs, batch_siz
             return int(float(x))
         except (ValueError, TypeError):
             return 0
-    
+
     cond_df['label'] = cond_df['label'].apply(convert_label)
 
     # Print positive/negative distribution
@@ -153,7 +183,7 @@ def prepare_dataset(data_dir, model_type):
 
     # Get all label columns (excluding metadata columns)
     label_columns = [col for col in df.columns if col not in ['sample_id', 'patient_id', 'report_id', 'img_path']]
-    
+
     # Copy labels directly from original DataFrame
     for label in label_columns:
         train_df[label] = df[label]
@@ -188,28 +218,43 @@ LABEL_TO_DATASET = {
 }
 
 
-def main():
-    args = parse_args()
+def run_training(data_dir, model_type, backbone, epochs, batch_size, lr, output_dir):
+    """
+    Core function to prepare the dataset and train one model per condition.
+    """
     # Generate training CSV and get number of conditions
-    csv_path, num_conditions = prepare_dataset(args.data_dir, args.model_type)
+    csv_path, _ = prepare_dataset(data_dir, model_type)
     df = pd.read_csv(csv_path)
 
     # Select conditions relevant to the model_type
-    conditions = [c for c in df.columns if c != 'filename' and LABEL_TO_DATASET.get(c) == args.model_type]
+    conditions = [c for c in df.columns if c != 'filename' and LABEL_TO_DATASET.get(c) == model_type]
     print(f"Loaded training CSV: {csv_path}")
 
     # Train a model for each condition
     for condition in conditions:
         train_condition(
-            args.data_dir,
-            args.model_type,
+            data_dir,
+            model_type,
             condition,
-            args.backbone,
-            args.epochs,
-            args.batch_size,
-            args.lr,
-            args.output_dir
+            backbone,
+            epochs,
+            batch_size,
+            lr,
+            output_dir
         )
+
+
+def main():
+    args = parse_args()
+    run_training(
+        args.data_dir,
+        args.model_type,
+        args.backbone,
+        args.epochs,
+        args.batch_size,
+        args.lr,
+        args.output_dir
+    )
 
 
 if __name__ == '__main__':

@@ -39,7 +39,10 @@ label_to_group = {lbl: grp for grp, cols in label_cols_map.items() for lbl in co
 
 
 def count_labels(samples_csv: Path, label_cols):
-    # Count occurrences of each label value in the CSV file
+    """
+    Count occurrences of each label value in the CSV file.
+    Returns a dict mapping each label column to a defaultdict of value counts.
+    """
     counts = {col: defaultdict(int) for col in label_cols}
     with samples_csv.open(encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -53,14 +56,19 @@ def count_labels(samples_csv: Path, label_cols):
 
 
 def merge_dict(a, b):
-    # Merge counts from dictionary b into dictionary a
+    """
+    Merge counts from dictionary b into dictionary a.
+    Both a and b map label columns to defaultdicts of counts.
+    """
     for k, v in b.items():
         for sub, n in v.items():
             a[k][sub] += n
 
 
 def annotate_bars(ax, bars):
-    # Add text labels above each bar displaying its height
+    """
+    Add text labels above each bar displaying its height.
+    """
     for bar in bars:
         height = bar.get_height()
         ax.text(
@@ -72,8 +80,10 @@ def annotate_bars(ax, bars):
         )
 
 
-def plot_label_distributions(label_counts, data_counts, plots_dir):
-    # Generate and save distribution bar chart for each label
+def plot_label_distributions(label_counts, data_counts, plots_dir: Path):
+    """
+    Generate and save distribution bar chart for each label.
+    """
     for lbl, subs in label_counts.items():
         grp = label_to_group.get(lbl)
         total = data_counts.get(grp, 0)
@@ -98,8 +108,10 @@ def plot_label_distributions(label_counts, data_counts, plots_dir):
         plt.close(fig)
 
 
-def plot_valid_invalid(proc_dir, plots_dir):
-    # Generate and save bar chart comparing valid vs invalid report counts
+def plot_valid_invalid(proc_dir: Path, plots_dir: Path):
+    """
+    Generate and save bar chart comparing valid vs invalid report counts.
+    """
     valid_path = proc_dir.parent / "valid_reports.json"
     invalid_path = proc_dir.parent / "invalid_reports.json"
     valid = json.loads(valid_path.read_text(encoding="utf-8")) if valid_path.exists() else []
@@ -119,8 +131,10 @@ def plot_valid_invalid(proc_dir, plots_dir):
     plt.close(fig)
 
 
-def plot_data_counts(data_counts, plots_dir):
-    # Generate and save bar chart of sample counts by type
+def plot_data_counts(data_counts, plots_dir: Path):
+    """
+    Generate and save bar chart of sample counts by type.
+    """
     categories = list(data_counts.keys())
     values = [data_counts[k] for k in categories]
 
@@ -134,15 +148,16 @@ def plot_data_counts(data_counts, plots_dir):
     plt.close(fig)
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--processed_dir", default="../../processed_dataset",
-        help="Directory containing processed_dataset outputs"
-    )
-    args = parser.parse_args()
-
-    proc = Path(args.processed_dir).resolve()
+def analyze_processed_data(processed_dir_path: str):
+    """
+    Core function that performs analysis on a processed_dataset directory.
+    Creates:
+      - analysis/data_counts.json
+      - analysis/label_counts.json
+      - analysis/plots/
+    Prints summary statistics to the terminal.
+    """
+    proc = Path(processed_dir_path).resolve()
     analysis_dir = proc / "analysis"
     plots_dir = analysis_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
@@ -158,6 +173,7 @@ def main():
     for key, path in csv_files.items():
         if path.exists():
             with path.open(encoding="utf-8") as f:
+                # Subtract 1 for header row
                 data_counts[key] = sum(1 for _ in f) - 1
         else:
             data_counts[key] = 0
@@ -193,8 +209,19 @@ def main():
     plot_data_counts(data_counts, plots_dir)
     plot_label_distributions(label_counts, data_counts, plots_dir)
 
-    # Notify user of saved plots
     print(f"\nPlots saved in {plots_dir}")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--processed_dir",
+        default="../../processed_dataset",
+        help="Directory containing processed_dataset outputs"
+    )
+    args = parser.parse_args()
+
+    analyze_processed_data(args.processed_dir)
 
 
 if __name__ == "__main__":
